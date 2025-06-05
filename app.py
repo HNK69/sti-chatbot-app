@@ -1,72 +1,96 @@
 import streamlit as st
 from PIL import Image
+import numpy as np
+from tensorflow.keras.models import load_model
 
-# Page settings
-st.set_page_config(page_title="STI Diagnosis Chatbot", page_icon="🧠", layout="centered")
+# Load trained CNN model
+@st.cache_resource
+def load_sti_model():
+    return load_model("sti_image_model.h5")
 
-st.title("🧠 STI Diagnosis Chatbot")
-st.markdown("This tool offers basic guidance for Sexually Transmitted Infections (STIs) based on your symptoms and optional image upload. Not a substitute for professional medical advice.")
+model = load_sti_model()
+classes = ["Herpes", "Gonorrhea", "Syphilis", "Normal"]
 
-# Consent checkbox
-consent = st.checkbox("I understand this is not medical advice and agree to proceed.")
+# Image preprocessing
+def preprocess_image(img):
+    img = img.resize((224, 224))  # Adjust to your model's input size
+    img = np.array(img) / 255.0
+    img = np.expand_dims(img, axis=0)
+    return img
 
-if consent:
+# Symptom-based diagnosis scoring
+def diagnose_by_symptoms(symptoms):
+    scores = {"Herpes": 0, "Gonorrhea": 0, "Syphilis": 0}
+    
+    if symptoms.get('genital_sores'):
+        scores["Herpes"] += 2
+    if symptoms.get('pain'):
+        scores["Herpes"] += 1
+        scores["Gonorrhea"] += 1
+    if symptoms.get('itching'):
+        scores["Herpes"] += 1
+    if symptoms.get('painful_urination'):
+        scores["Gonorrhea"] += 2
+    if symptoms.get('discharge'):
+        scores["Gonorrhea"] += 2
+    if symptoms.get('rash'):
+        scores["Syphilis"] += 2
+    if symptoms.get('fever'):
+        scores["Syphilis"] += 1
+    if symptoms.get('swollen_glands'):
+        scores["Syphilis"] += 1
 
-    # Image upload section
-    st.subheader("📸 Upload an Image (Optional)")
-    uploaded_image = st.file_uploader("Upload a photo of the affected area", type=["jpg", "jpeg", "png"])
+    top_disease = max(scores, key=scores.get)
+    return top_disease if scores[top_disease] >= 2 else "Uncertain"
 
-    if uploaded_image is not None:
-        image = Image.open(uploaded_image)
-        st.image(image, caption="Uploaded Image", use_column_width=True)
-        st.info("Image received. (Model-based prediction feature coming soon)")
+# UI
+st.set_page_config(page_title="STI Diagnosis Chatbot", page_icon="🧠")
+st.title("🧠 STI Diagnosis App")
+st.markdown("Provide symptoms and upload an image for a more accurate prediction.")
 
-    # Symptom checklist
-    st.subheader("🩺 Symptoms Checklist")
+consent = st.checkbox("I agree this is not a substitute for professional medical advice.")
+if not consent:
+    st.warning("Please agree to the disclaimer to proceed.")
+    st.stop()
 
-    symptoms_input = {
-        "genital_sores": st.checkbox("Do you have genital sores?"),
-        "pain": st.checkbox("Are you experiencing pain in the genital area?"),
-        "itching": st.checkbox("Is there itching in the genital area?"),
-        "painful_urination": st.checkbox("Do you feel pain during urination?"),
-        "discharge": st.checkbox("Do you notice any unusual discharge?"),
-        "rash": st.checkbox("Do you have a rash?"),
-        "fever": st.checkbox("Are you experiencing fever?"),
-        "swollen_glands": st.checkbox("Do you have swollen glands?")
-    }
+# Upload Image
+st.subheader("📸 Upload Image (optional)")
+uploaded_image = st.file_uploader("Upload an image (jpg/jpeg/png)", type=["jpg", "jpeg", "png"])
 
-    def sti_diagnosis(symptoms):
-        if symptoms.get('genital_sores') and symptoms.get('pain') and symptoms.get('itching'):
-            return {
-                "Diagnosis": "Herpes Simplex Virus (HSV)",
-                "Prevention": "Use protection during sex; avoid contact during outbreaks.",
-                "Advice": "Consult a dermatologist or healthcare provider for antiviral treatment."
-            }
-        elif symptoms.get('painful_urination') and symptoms.get('discharge'):
-            return {
-                "Diagnosis": "Gonorrhea",
-                "Prevention": "Practice safe sex; get regular STI screenings.",
-                "Advice": "See a doctor immediately for antibiotic treatment."
-            }
-        elif symptoms.get('rash') and symptoms.get('fever') and symptoms.get('swollen_glands'):
-            return {
-                "Diagnosis": "Syphilis",
-                "Prevention": "Avoid risky sexual behavior; use condoms.",
-                "Advice": "Early treatment with penicillin is essential."
-            }
-        else:
-            return {
-                "Diagnosis": "Uncertain",
-                "Prevention": "Practice safe sex; get regular health check-ups.",
-                "Advice": "Consult a healthcare professional for a proper diagnosis."
-            }
+image_diagnosis = "No image uploaded"
+if uploaded_image:
+    img = Image.open(uploaded_image)
+    st.image(img, caption="Uploaded Image", use_column_width=True)
 
-    if st.button("Get Diagnosis"):
-        with st.spinner("Analyzing your symptoms..."):
-            result = sti_diagnosis(symptoms_input)
-            st.success("Diagnosis Completed")
-            st.markdown(f"### 🧾 Possible Diagnosis: **{result['Diagnosis']}**")
-            st.markdown(f"**🛡 Prevention Tips:** {result['Prevention']}")
-            st.markdown(f"**📌 Advice:** {result['Advice']}")
-else:
-    st.warning("You must agree to the terms above to use this tool.")
+    preprocessed = preprocess_image(img)
+    prediction = model.predict(preprocessed)[0]
+    image_diagnosis = classes[np.argmax(prediction)]
+    st.markdown(f"**📷 Image-based Diagnosis:** `{image_diagnosis}`")
+
+# Symptom inputs
+st.subheader("🩺 Symptom Checklist")
+symptoms = {
+    "genital_sores": st.checkbox("Genital sores"),
+    "pain": st.checkbox("Pain in genital area"),
+    "itching": st.checkbox("Itching"),
+    "painful_urination": st.checkbox("Painful urination"),
+    "discharge": st.checkbox("Unusual discharge"),
+    "rash": st.checkbox("Skin rash"),
+    "fever": st.checkbox("Fever"),
+    "swollen_glands": st.checkbox("Swollen glands")
+}
+
+if st.button("🔍 Diagnose"):
+    symptom_diagnosis = diagnose_by_symptoms(symptoms)
+    
+    st.markdown("### 🧾 Combined Diagnosis")
+
+    # Priority to Image diagnosis if it's confident
+    if image_diagnosis != "No image uploaded" and image_diagnosis != "Normal":
+        st.success(f"🔬 **Likely condition (image-based):** {image_diagnosis}")
+    elif symptom_diagnosis != "Uncertain":
+        st.success(f"📋 **Likely condition (symptom-based):** {symptom_diagnosis}")
+    else:
+        st.warning("🤷 Unable to determine condition confidently. Please consult a doctor.")
+
+    st.markdown("**Disclaimer:** This app does not replace clinical consultation.")
